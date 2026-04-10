@@ -1,0 +1,320 @@
+```html
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Insane Frontend Library POV - Planet Edition</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #09090b; /* 매우 어두운 배경 */
+      color: white;
+      overflow: hidden; /* 가로, 세로 스크롤 모두 완벽히 방지 */
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+    }
+
+    /* 모던 스크롤바 (입력창용) */
+    textarea::-webkit-scrollbar {
+      width: 6px;
+    }
+    textarea::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    textarea::-webkit-scrollbar-thumb {
+      background-color: rgba(255, 255, 255, 0.2);
+      border-radius: 10px;
+    }
+    textarea:focus {
+      outline: none;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 인터랙티브 파티클 캔버스 -->
+  <canvas id="particle-canvas"></canvas>
+
+  <!-- 모던 텍스트 에디터 (글래스모피즘) -->
+  <div class="fixed bottom-6 left-1/2 transform -translate-x-1/2 w-[90%] max-w-3xl bg-[#18181b]/70 backdrop-blur-xl border border-white/10 rounded-2xl p-5 shadow-[0_8px_32px_rgba(0,0,0,0.5)] z-50 flex flex-col gap-3 transition-colors duration-300 focus-within:border-white/30 focus-within:bg-[#18181b]/80">
+    <div class="flex justify-between items-center px-1">
+      <span class="text-xs font-semibold text-white/40 uppercase tracking-widest flex items-center gap-2">
+        <div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+        Live Editor
+      </span>
+      <span class="text-[10px] text-white/30 font-mono">Auto-updates on typing</span>
+    </div>
+    <textarea id="text-input" class="w-full h-24 sm:h-32 bg-transparent text-sm sm:text-base text-white/80 resize-none font-serif leading-relaxed" spellcheck="false"></textarea>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('particle-canvas');
+    const ctx = canvas.getContext('2d');
+    const textInput = document.getElementById('text-input');
+
+    // 초기 데모용 텍스트
+    let currentText = `In the beginning God created the heaven and the earth. And the earth was without form, and void; and darkness was upon the face of the deep. And the Spirit of God moved upon the face of the waters. And God said, Let there be light: and there was light. And God saw the light, that it was good: and God divided the light from the darkness. And God called the light Day, and the darkness he called Night. And the evening and the morning were the first day. And God said, Let there be a firmament in the midst of the waters, and let it divide the waters from the waters. And God made the firmament, and divided the waters which were under the firmament from the waters which were above the firmament: and it was so. And God called the firmament Heaven. And the evening and the morning were the second day. And God said, Let the waters under the heaven be gathered together unto one place, and let the dry land appear: and it was so. And God called the dry land Earth; and the gathering together of the waters called he Seas: and God saw that it was good. And God said, Let the earth bring forth grass, the herb yielding seed, and the fruit tree yielding fruit after his kind, whose seed is in itself, upon the earth: and it was so. And the earth brought forth grass, and herb yielding seed after his kind, and the tree yielding fruit, whose seed was in itself, after his kind: and God saw that it was good. And the evening and the morning were the third day. And God said, Let there be lights in the firmament of the heaven to divide the day from the night; and let them be for signs, and for seasons, and for days, and years: And let them be for lights in the firmament of the heaven to give light upon the earth: and it was so. And God made two great lights; the greater light to rule the day, and the lesser light to rule the night: he made the stars also. And God set them in the firmament of the heaven to give light upon the earth, And to rule over the day and over the night, and to divide the light from the darkness: and God saw that it was good.`;
+
+    textInput.value = currentText;
+
+    const FONT = '15px Georgia';
+    const LINE_HEIGHT = 24;
+    const PADDING_X = Math.min(60, window.innerWidth * 0.05);
+    const PADDING_Y = Math.min(60, window.innerHeight * 0.1);
+
+    let chars = []; 
+    let mouse = { clientX: -1000, clientY: -1000, vx: 0, vy: 0 }; 
+    let prevMouse = { x: -1000, y: -1000 };
+
+    // 텍스트 입력 시 리렌더링 (디바운싱 적용)
+    let debounceTimer;
+    textInput.addEventListener('input', (e) => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        let newText = e.target.value;
+        if (newText.trim() === '') newText = ' '; // 빈 문자열 에러 방지
+        currentText = newText;
+        initParticles();
+      }, 300); // 0.3초 대기 후 적용
+    });
+
+    function resize() {
+      initParticles();
+    }
+
+    function layoutWithLines(text, maxWidth, context) {
+      context.font = FONT;
+      const words = text.split(' ');
+      const lines = [];
+      let currentLine = words[0];
+
+      for (let i = 1; i < words.length; i++) {
+        const word = words[i];
+        const width = context.measureText(currentLine + " " + word).width;
+        if (width < maxWidth) {
+          currentLine += " " + word;
+        } else {
+          lines.push({ text: currentLine });
+          currentLine = word;
+        }
+      }
+      lines.push({ text: currentLine });
+      return { lines };
+    }
+
+    function initParticles() {
+      chars = []; 
+      
+      const dpr = window.devicePixelRatio || 1;
+      const logicalWidth = window.innerWidth;
+      
+      canvas.width = logicalWidth * dpr;
+      ctx.scale(dpr, dpr);
+      ctx.font = FONT;
+      
+      const maxWidth = logicalWidth - (PADDING_X * 2);
+      const { lines } = layoutWithLines(currentText, maxWidth, ctx);
+      
+      // 텍스트 길이와 상관없이 캔버스 높이를 항상 현재 화면 창 높이로 고정 (스크롤 원천 차단)
+      const logicalHeight = window.innerHeight; 
+      
+      canvas.height = logicalHeight * dpr;
+      canvas.style.width = `${logicalWidth}px`;
+      canvas.style.height = `${logicalHeight}px`;
+      
+      ctx.scale(dpr, dpr); 
+      ctx.font = FONT;     
+
+      let y = PADDING_Y;
+
+      for (const line of lines) {
+        let x = PADDING_X;
+        for (const ch of line.text) {
+          if (ch.trim() === '') {
+            x += ctx.measureText(ch).width;
+            continue;
+          }
+
+          chars.push({
+            char: ch,
+            baseX: x,      
+            baseY: y,      
+            x: x,          
+            y: y,          
+            vx: 0,         
+            vy: 0,
+            z: 0,          
+            
+            isPlanet: Math.random() < 0.85,
+            
+            sphereRadius: 10 + Math.random() * 25, 
+            sphereTheta: Math.random() * Math.PI * 2,
+            spherePhi: Math.acos(Math.random() * 2 - 1),
+            
+            ringRadius: 120, 
+            ringAngle: Math.random() * Math.PI * 2,
+            ringSpeed: 2.0 
+          });
+          
+          x += ctx.measureText(ch).width;
+        }
+        y += LINE_HEIGHT;
+      }
+    }
+
+    function animate() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.font = FONT;
+      ctx.textBaseline = 'middle';
+      
+      let time = performance.now() * 0.001; 
+      let isInteracting = mouse.clientX !== -1000;
+      
+      let currentMouseX = isInteracting ? mouse.clientX + window.scrollX : -1000;
+      let currentMouseY = isInteracting ? mouse.clientY + window.scrollY : -1000;
+      
+      if (isInteracting) {
+        if (prevMouse.x === -1000) {
+          prevMouse.x = currentMouseX;
+          prevMouse.y = currentMouseY;
+        }
+        let rawVx = currentMouseX - prevMouse.x;
+        let rawVy = currentMouseY - prevMouse.y;
+
+        mouse.vx += (rawVx - mouse.vx) * 0.15;
+        mouse.vy += (rawVy - mouse.vy) * 0.15;
+
+        prevMouse.x = currentMouseX;
+        prevMouse.y = currentMouseY;
+      } else {
+        mouse.vx *= 0.9;
+        mouse.vy *= 0.9;
+        prevMouse.x = -1000;
+        prevMouse.y = -1000;
+      }
+
+      const INTERACTION_RADIUS = 170; 
+
+      let dynamicTiltX = 0.5 - (mouse.vy * 0.12); 
+      let dynamicTiltZ = 0.2 + (mouse.vx * 0.12); 
+      
+      dynamicTiltX = Math.max(-1.5, Math.min(2.5, dynamicTiltX));
+      dynamicTiltZ = Math.max(-2.0, Math.min(2.0, dynamicTiltZ));
+
+      for (let i = 0; i < chars.length; i++) {
+        let p = chars[i];
+
+        let dxBase = p.baseX - currentMouseX;
+        let dyBase = p.baseY - currentMouseY;
+        let distBase = Math.sqrt(dxBase * dxBase + dyBase * dyBase);
+
+        if (isInteracting && distBase < INTERACTION_RADIUS) {
+          let targetX, targetY, targetZ;
+
+          if (p.isPlanet) {
+            let rotY = time * 3.0; 
+            
+            let x0 = p.sphereRadius * Math.sin(p.spherePhi) * Math.cos(p.sphereTheta);
+            let y0 = p.sphereRadius * Math.sin(p.spherePhi) * Math.sin(p.sphereTheta);
+            let z0 = p.sphereRadius * Math.cos(p.spherePhi);
+
+            let rotX = x0 * Math.cos(rotY) - z0 * Math.sin(rotY);
+            let rotZ = x0 * Math.sin(rotY) + z0 * Math.cos(rotY);
+
+            targetX = currentMouseX + rotX;
+            targetY = currentMouseY + y0;
+            targetZ = rotZ;
+            
+          } else {
+            let currentAngle = p.ringAngle + time * p.ringSpeed;
+            
+            let x0 = Math.cos(currentAngle) * p.ringRadius;
+            let z0 = Math.sin(currentAngle) * p.ringRadius;
+            let y0 = 0;
+
+            let y1 = y0 * Math.cos(dynamicTiltX) - z0 * Math.sin(dynamicTiltX);
+            let z1 = y0 * Math.sin(dynamicTiltX) + z0 * Math.cos(dynamicTiltX);
+            
+            let x2 = x0 * Math.cos(dynamicTiltZ) - y1 * Math.sin(dynamicTiltZ);
+            let y2 = x0 * Math.sin(dynamicTiltZ) + y1 * Math.cos(dynamicTiltZ);
+
+            targetX = currentMouseX + x2;
+            targetY = currentMouseY + y2;
+            targetZ = z1;
+          }
+
+          p.vx += (targetX - p.x) * 0.15;
+          p.vy += (targetY - p.y) * 0.15;
+          p.z += (targetZ - p.z) * 0.2; 
+
+        } else {
+          p.vx += (p.baseX - p.x) * 0.08;
+          p.vy += (p.baseY - p.y) * 0.08;
+          p.z += (0 - p.z) * 0.1; 
+        }
+
+        p.vx *= 0.82;
+        p.vy *= 0.82;
+
+        p.x += p.vx;
+        p.y += p.vy;
+      }
+
+      if (isInteracting) {
+        chars.sort((a, b) => a.z - b.z);
+      }
+
+      for (let i = 0; i < chars.length; i++) {
+        let p = chars[i];
+        let speed = Math.abs(p.vx) + Math.abs(p.vy);
+        
+        if (Math.abs(p.z) > 1 || speed > 0.5) {
+          let alpha = Math.max(0.1, Math.min(1, 0.7 + (p.z / 60)));
+          ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+        } else {
+          ctx.fillStyle = `rgba(100, 100, 110, 0.3)`;
+        }
+
+        ctx.fillText(p.char, p.x, p.y);
+      }
+
+      requestAnimationFrame(animate);
+    }
+
+    window.addEventListener('resize', resize);
+    
+    window.addEventListener('mousemove', (e) => {
+      mouse.clientX = e.clientX;
+      mouse.clientY = e.clientY;
+    });
+
+    window.addEventListener('mouseout', () => {
+      mouse.clientX = -1000;
+      mouse.clientY = -1000;
+    });
+
+    window.addEventListener('touchmove', (e) => {
+      mouse.clientX = e.touches[0].clientX;
+      mouse.clientY = e.touches[0].clientY;
+    });
+
+    window.addEventListener('touchend', () => {
+      mouse.clientX = -1000;
+      mouse.clientY = -1000;
+    });
+
+    resize();
+    animate();
+  </script>
+</body>
+</html>
+
+
+
+```
